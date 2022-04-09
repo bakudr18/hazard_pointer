@@ -1,10 +1,14 @@
+#define _POSIX_C_SOURCE 199309L
 #include <assert.h>
 #include <err.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <sys/timerfd.h>
+#include <time.h>
+#include <unistd.h>
 #include "hp.h"
 
-#define N_READERS 3
+#define N_READERS 10
 #define N_WRITERS 1
 #define N_ITERS 20
 #define ARRAY_SIZE(x) sizeof(x) / sizeof(*x)
@@ -54,6 +58,7 @@ void deinit()
 static void *reader_thread(void *arg)
 {
     (void) arg;
+    struct timespec t1 = {.tv_sec = 0, .tv_nsec = 100};
 
     for (int i = 0; i < N_ITERS; ++i) {
         config_t *safe_config =
@@ -63,6 +68,7 @@ static void *reader_thread(void *arg)
 
         print_config("read config    ", safe_config);
         drop(config_dom, (uintptr_t) safe_config);
+        nanosleep(&t1, NULL);
     }
 
     return NULL;
@@ -80,16 +86,48 @@ static void *writer_thread(void *arg)
         print_config("updating config", new_config);
 
         swap(config_dom, (uintptr_t *) &shared_config, (uintptr_t) new_config,
-             0);
+             DEFER_DEALLOC);
         print_config("updated config ", new_config);
     }
 
     return NULL;
 }
 
+static void *cleaner_thread(void *arg)
+{
+    atomic_bool *stop = (atomic_bool *) arg;
+    struct itimerspec new_value;
+    new_value.it_value.tv_sec = 0;
+    new_value.it_value.tv_nsec = 1000;
+
+    new_value.it_interval.tv_sec = 1;
+    new_value.it_interval.tv_nsec = 0;
+
+    int fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    if (fd == -1)
+        warn("timerfd_create");
+
+    if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &new_value, NULL))
+        warn("timerfd_settime");
+
+    while (!atomic_load (stop)) {
+        uint64_t exp;
+        ssize_t s = read(fd, &exp, sizeof(uint64_t));
+        if (s != sizeof(uint64_t)) {
+            warn("read failed");
+            return NULL;
+        }
+        printf("cleanup\n");
+        cleanup(config_dom, DEFER_DEALLOC);
+    }
+    close(fd);
+    return NULL;
+}
+
 int main()
 {
-    pthread_t readers[N_READERS], writers[N_WRITERS];
+    pthread_t readers[N_READERS], writers[N_WRITERS], cleaner;
+    atomic_bool stop = ATOMIC_VAR_INIT(false);
 
     init();
 
@@ -103,6 +141,9 @@ int main()
             warn("pthread_create");
     }
 
+    if (pthread_create(&cleaner, NULL, cleaner_thread, &stop))
+        warn("pthread_create");
+
     /* Wait for threads to finish */
     for (size_t i = 0; i < ARRAY_SIZE(readers); ++i) {
         if (pthread_join(readers[i], NULL))
@@ -112,6 +153,10 @@ int main()
         if (pthread_join(writers[i], NULL))
             warn("pthread_join");
     }
+
+    atomic_store(&stop, true);
+    if (pthread_join(cleaner, NULL))
+        warn("pthread_join");
 
     deinit();
 

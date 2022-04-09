@@ -7,6 +7,7 @@
     __atomic_compare_exchange(dst, expected, desired, 0, __ATOMIC_SEQ_CST, \
                               __ATOMIC_SEQ_CST)
 
+#include <stdatomic.h>
 #include <stdint.h>
 
 #define LIST_ITER(head, node) \
