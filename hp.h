@@ -1,17 +1,18 @@
 /* shortcuts */
-#define atomic_load(src) __atomic_load_n(src, __ATOMIC_SEQ_CST)
-#define atomic_store(dst, val) __atomic_store(dst, val, __ATOMIC_SEQ_CST)
-#define atomic_exchange(ptr, val) \
-    __atomic_exchange_n(ptr, val, __ATOMIC_SEQ_CST)
-#define atomic_cas(dst, expected, desired)                                 \
-    __atomic_compare_exchange(dst, expected, desired, 0, __ATOMIC_SEQ_CST, \
-                              __ATOMIC_SEQ_CST)
+#define atomic_load(src, memorder) __atomic_load_n(src, memorder)
+#define atomic_store(dst, val, memorder) __atomic_store(dst, val, memorder)
+#define atomic_exchange(ptr, val, memorder) \
+    __atomic_exchange_n(ptr, val, memorder)
+#define atomic_cas(dst, expected, desired, success_order, fail_order)   \
+    __atomic_compare_exchange(dst, expected, desired, 0, success_order, \
+                              fail_order)
+#define atomic_test_and_set(ptr, memorder) __atomic_test_and_set(ptr, memorder)
 
-#include <stdatomic.h>
 #include <stdint.h>
 
-#define LIST_ITER(head, node) \
-    for (node = atomic_load(head); node; node = atomic_load(&node->next))
+#define LIST_ITER(head, node)                              \
+    for (node = atomic_load(head, __ATOMIC_ACQUIRE); node; \
+         node = atomic_load(&node->next, __ATOMIC_ACQUIRE))
 
 typedef struct __hp {
     uintptr_t ptr;
@@ -30,11 +31,11 @@ static hp_t *list_append(hp_t **head, uintptr_t ptr)
         return NULL;
 
     new->ptr = ptr;
-    hp_t *old = atomic_load(head);
+    hp_t *old = atomic_load(head, __ATOMIC_ACQUIRE);
 
     do {
         new->next = old;
-    } while (!atomic_cas(head, &old, &new));
+    } while (!atomic_cas(head, &old, &new, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
 
     return new;
 }
@@ -48,8 +49,9 @@ hp_t *list_insert_or_append(hp_t **head, uintptr_t ptr)
     bool need_alloc = true;
 
     LIST_ITER (head, node) {
-        uintptr_t expected = atomic_load(&node->ptr);
-        if (expected == 0 && atomic_cas(&node->ptr, &expected, &ptr)) {
+        uintptr_t expected = atomic_load(&node->ptr, __ATOMIC_ACQUIRE);
+        if (expected == 0 && atomic_cas(&node->ptr, &expected, &ptr,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
             need_alloc = false;
             break;
         }
@@ -68,8 +70,9 @@ bool list_remove(hp_t **head, uintptr_t ptr)
     const uintptr_t nullptr = 0;
 
     LIST_ITER (head, node) {
-        uintptr_t expected = atomic_load(&node->ptr);
-        if (expected == ptr && atomic_cas(&node->ptr, &expected, &nullptr))
+        uintptr_t expected = atomic_load(&node->ptr, __ATOMIC_ACQUIRE);
+        if (expected == ptr && atomic_cas(&node->ptr, &expected, &nullptr,
+                                          __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
             return true;
     }
 
@@ -82,7 +85,7 @@ bool list_contains(hp_t **head, uintptr_t ptr)
     hp_t *node;
 
     LIST_ITER (head, node) {
-        if (atomic_load(&node->ptr) == ptr)
+        if (atomic_load(&node->ptr, __ATOMIC_ACQUIRE) == ptr)
             return true;
     }
 
@@ -143,13 +146,13 @@ uintptr_t load(domain_t *dom, const uintptr_t *prot_ptr)
     const uintptr_t nullptr = 0;
 
     while (1) {
-        uintptr_t val = atomic_load(prot_ptr);
+        uintptr_t val = atomic_load(prot_ptr, __ATOMIC_ACQUIRE);
         hp_t *node = list_insert_or_append(&dom->pointers, val);
         if (!node)
             return 0;
 
         /* Hazard pointer inserted successfully */
-        if (atomic_load(prot_ptr) == val)
+        if (atomic_load(prot_ptr, __ATOMIC_ACQUIRE) == val)
             return val;
 
         /*
@@ -159,7 +162,8 @@ uintptr_t load(domain_t *dom, const uintptr_t *prot_ptr)
          * the list.
          */
         uintptr_t tmp = val;
-        if (!atomic_cas(&node->ptr, &tmp, &nullptr))
+        if (!atomic_cas(&node->ptr, &tmp, &nullptr, __ATOMIC_ACQ_REL,
+                        __ATOMIC_RELAXED))
             list_remove(&dom->pointers, val);
     }
 }
@@ -197,7 +201,8 @@ static void cleanup_ptr(domain_t *dom, uintptr_t ptr, int flags)
  */
 void swap(domain_t *dom, uintptr_t *prot_ptr, uintptr_t new_val, int flags)
 {
-    const uintptr_t old_obj = atomic_exchange(prot_ptr, new_val);
+    const uintptr_t old_obj =
+        atomic_exchange(prot_ptr, new_val, __ATOMIC_ACQ_REL);
     cleanup_ptr(dom, old_obj, flags);
 }
 

@@ -95,7 +95,7 @@ static void *writer_thread(void *arg)
 
 static void *cleaner_thread(void *arg)
 {
-    atomic_bool *stop = (atomic_bool *) arg;
+    bool *stop = (bool *) arg;
     struct itimerspec new_value;
     new_value.it_value.tv_sec = 0;
     new_value.it_value.tv_nsec = 1000;
@@ -110,7 +110,7 @@ static void *cleaner_thread(void *arg)
     if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &new_value, NULL))
         warn("timerfd_settime");
 
-    while (!atomic_load (stop)) {
+    while (!atomic_load(stop, __ATOMIC_RELAXED)) {
         uint64_t exp;
         ssize_t s = read(fd, &exp, sizeof(uint64_t));
         if (s != sizeof(uint64_t)) {
@@ -127,7 +127,7 @@ static void *cleaner_thread(void *arg)
 int main()
 {
     pthread_t readers[N_READERS], writers[N_WRITERS], cleaner;
-    atomic_bool stop = ATOMIC_VAR_INIT(false);
+    bool stop = false;
 
     init();
 
@@ -154,7 +154,8 @@ int main()
             warn("pthread_join");
     }
 
-    atomic_store(&stop, true);
+    while (!atomic_test_and_set(&stop, __ATOMIC_RELAXED))
+        ;
     if (pthread_join(cleaner, NULL))
         warn("pthread_join");
 
