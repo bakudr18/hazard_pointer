@@ -161,5 +161,7 @@ int main()
 
     deinit();
 
+    TRACE_PRINT();
+
     return EXIT_SUCCESS;
 }

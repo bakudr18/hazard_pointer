@@ -7,12 +7,44 @@
     __atomic_compare_exchange(dst, expected, desired, 0, success_order, \
                               fail_order)
 #define atomic_test_and_set(ptr, memorder) __atomic_test_and_set(ptr, memorder)
+#define atomic_fetch_add(ptr, val, memorder) \
+    __atomic_fetch_add(ptr, val, memorder)
+
 
 #include <stdint.h>
 
 #define LIST_ITER(head, node)                              \
     for (node = atomic_load(head, __ATOMIC_ACQUIRE); node; \
          node = atomic_load(&node->next, __ATOMIC_ACQUIRE))
+
+#define DO_ANALYSIS
+
+#ifdef DO_ANALYSIS
+
+#define TRACE(ops)                                          \
+    do {                                                    \
+        atomic_fetch_add(&stats[ops], 1, __ATOMIC_SEQ_CST); \
+    } while (0)
+
+#define TRACE_PRINTF(ops) printf("%s: %lu\n", #ops, stats[ops])
+
+enum { TRACE_LOAD_SUCCESS = 0, TRACE_LOAD_FAIL, TRACE_SWAP, TRACE_NUMS };
+
+static uint64_t stats[TRACE_NUMS] = {0};
+
+void trace_print(void)
+{
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    TRACE_PRINTF(TRACE_LOAD_SUCCESS);
+    TRACE_PRINTF(TRACE_LOAD_FAIL);
+    TRACE_PRINTF(TRACE_SWAP);
+}
+#define TRACE_PRINT() trace_print()
+
+#else /* DO_ANALYSIS */
+#define TRACE(ops)
+#define TRACE_PRINT()
+#endif /* DO_ANALYSIS */
 
 typedef struct __hp {
     uintptr_t ptr;
@@ -152,8 +184,10 @@ uintptr_t load(domain_t *dom, const uintptr_t *prot_ptr)
             return 0;
 
         /* Hazard pointer inserted successfully */
-        if (atomic_load(prot_ptr, __ATOMIC_ACQUIRE) == val)
+        if (atomic_load(prot_ptr, __ATOMIC_ACQUIRE) == val) {
+            TRACE(TRACE_LOAD_SUCCESS);
             return val;
+        }
 
         /*
          * This pointer is being retired by another thread - remove this hazard
@@ -161,6 +195,7 @@ uintptr_t load(domain_t *dom, const uintptr_t *prot_ptr)
          * just used. If someone else used it to drop the same pointer, we walk
          * the list.
          */
+        TRACE(TRACE_LOAD_FAIL);
         uintptr_t tmp = val;
         if (!atomic_cas(&node->ptr, &tmp, &nullptr, __ATOMIC_ACQ_REL,
                         __ATOMIC_RELAXED))
@@ -203,6 +238,7 @@ void swap(domain_t *dom, uintptr_t *prot_ptr, uintptr_t new_val, int flags)
 {
     const uintptr_t old_obj =
         atomic_exchange(prot_ptr, new_val, __ATOMIC_ACQ_REL);
+    TRACE(TRACE_SWAP);
     cleanup_ptr(dom, old_obj, flags);
 }
 
