@@ -8,8 +8,9 @@
 #include <unistd.h>
 #include "hp.h"
 
-#define N_READERS 10
-#define N_WRITERS 1
+#define N_THREADS 4000
+#define N_READERS 2000
+#define N_WRITERS 2000
 #define N_ITERS 20
 #define ARRAY_SIZE(x) sizeof(x) / sizeof(*x)
 
@@ -58,7 +59,6 @@ void deinit()
 static void *reader_thread(void *arg)
 {
     (void) arg;
-    struct timespec t1 = {.tv_sec = 0, .tv_nsec = 100};
 
     for (int i = 0; i < N_ITERS; ++i) {
         config_t *safe_config =
@@ -68,7 +68,6 @@ static void *reader_thread(void *arg)
 
         print_config("read config    ", safe_config);
         drop(config_dom, (uintptr_t) safe_config);
-        nanosleep(&t1, NULL);
     }
 
     return NULL;
@@ -87,7 +86,7 @@ static void *writer_thread(void *arg)
 
         swap(config_dom, (uintptr_t *) &shared_config, (uintptr_t) new_config,
              DEFER_DEALLOC);
-        print_config("updated config ", new_config);
+        // print_config("updated config ", new_config);
     }
 
     return NULL;
@@ -126,38 +125,48 @@ static void *cleaner_thread(void *arg)
 
 int main()
 {
-    pthread_t readers[N_READERS], writers[N_WRITERS], cleaner;
-    bool stop = false;
+    // pthread_t readers[N_READERS], writers[N_WRITERS], cleaner;
+    // bool stop = false;
+    pthread_t rwthread[N_THREADS];
 
     init();
 
+    for (size_t i = 0; i < ARRAY_SIZE(rwthread); i++) {
+        if (pthread_create(rwthread + i, NULL,
+                           i & 1 ? reader_thread : writer_thread, NULL))
+            warn("pthread_create");
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(rwthread); i++) {
+        if (pthread_join(rwthread[i], NULL))
+            warn("pthread_join");
+    }
     /* Start threads */
-    for (size_t i = 0; i < ARRAY_SIZE(readers); ++i) {
-        if (pthread_create(readers + i, NULL, reader_thread, NULL))
-            warn("pthread_create");
-    }
-    for (size_t i = 0; i < ARRAY_SIZE(writers); ++i) {
-        if (pthread_create(writers + i, NULL, writer_thread, NULL))
-            warn("pthread_create");
-    }
+    // for (size_t i = 0; i < ARRAY_SIZE(readers); ++i) {
+    //     if (pthread_create(readers + i, NULL, reader_thread, NULL))
+    //         warn("pthread_create");
+    // }
+    // for (size_t i = 0; i < ARRAY_SIZE(writers); ++i) {
+    //     if (pthread_create(writers + i, NULL, writer_thread, NULL))
+    //         warn("pthread_create");
+    // }
 
-    if (pthread_create(&cleaner, NULL, cleaner_thread, &stop))
-        warn("pthread_create");
+    // if (pthread_create(&cleaner, NULL, cleaner_thread, &stop))
+    //     warn("pthread_create");
 
     /* Wait for threads to finish */
-    for (size_t i = 0; i < ARRAY_SIZE(readers); ++i) {
-        if (pthread_join(readers[i], NULL))
-            warn("pthread_join");
-    }
-    for (size_t i = 0; i < ARRAY_SIZE(writers); ++i) {
-        if (pthread_join(writers[i], NULL))
-            warn("pthread_join");
-    }
+    // for (size_t i = 0; i < ARRAY_SIZE(readers); ++i) {
+    //     if (pthread_join(readers[i], NULL))
+    //         warn("pthread_join");
+    // }
+    // for (size_t i = 0; i < ARRAY_SIZE(writers); ++i) {
+    //     if (pthread_join(writers[i], NULL))
+    //         warn("pthread_join");
+    // }
 
-    while (!atomic_test_and_set(&stop, __ATOMIC_RELAXED))
-        ;
-    if (pthread_join(cleaner, NULL))
-        warn("pthread_join");
+    // while (!atomic_test_and_set(&stop, __ATOMIC_RELAXED))
+    //     ;
+    // if (pthread_join(cleaner, NULL))
+    //     warn("pthread_join");
 
     deinit();
 

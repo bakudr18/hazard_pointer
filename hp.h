@@ -17,7 +17,7 @@
     for (node = atomic_load(head, __ATOMIC_ACQUIRE); node; \
          node = atomic_load(&node->next, __ATOMIC_ACQUIRE))
 
-#define DO_ANALYSIS
+// #define DO_ANALYSIS
 
 #ifdef DO_ANALYSIS
 
