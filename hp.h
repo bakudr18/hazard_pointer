@@ -178,13 +178,13 @@ uintptr_t load(domain_t *dom, const uintptr_t *prot_ptr)
     const uintptr_t nullptr = 0;
 
     while (1) {
-        uintptr_t val = atomic_load(prot_ptr, __ATOMIC_ACQUIRE);
+        uintptr_t val = atomic_load(prot_ptr, __ATOMIC_SEQ_CST);
         hp_t *node = list_insert_or_append(&dom->pointers, val);
         if (!node)
             return 0;
 
         /* Hazard pointer inserted successfully */
-        if (atomic_load(prot_ptr, __ATOMIC_ACQUIRE) == val) {
+        if (atomic_load(prot_ptr, __ATOMIC_SEQ_CST) == val) {
             TRACE(TRACE_LOAD_SUCCESS);
             return val;
         }
@@ -237,7 +237,7 @@ static void cleanup_ptr(domain_t *dom, uintptr_t ptr, int flags)
 void swap(domain_t *dom, uintptr_t *prot_ptr, uintptr_t new_val, int flags)
 {
     const uintptr_t old_obj =
-        atomic_exchange(prot_ptr, new_val, __ATOMIC_ACQ_REL);
+        atomic_exchange(prot_ptr, new_val, __ATOMIC_SEQ_CST);
     TRACE(TRACE_SWAP);
     cleanup_ptr(dom, old_obj, flags);
 }
