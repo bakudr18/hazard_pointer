@@ -205,7 +205,7 @@ uintptr_t load(domain_t *dom, const uintptr_t *prot_ptr)
 
 /*
  * Drop a safe pointer to a shared object. This pointer (`safe_val`) must have
- * come from `load`
+ * come from `load` or `swap`
  */
 void drop(domain_t *dom, uintptr_t safe_val)
 {
@@ -213,7 +213,7 @@ void drop(domain_t *dom, uintptr_t safe_val)
         __builtin_unreachable();
 }
 
-static void cleanup_ptr(domain_t *dom, uintptr_t ptr, int flags)
+void cleanup_ptr(domain_t *dom, uintptr_t ptr, int flags)
 {
     if (!list_contains(&dom->pointers, ptr)) { /* deallocate straight away */
         dom->deallocator((void *) ptr);
@@ -234,12 +234,14 @@ static void cleanup_ptr(domain_t *dom, uintptr_t ptr, int flags)
  * if there are already no references to it; otherwise the cleanup will be done
  * the next time `cleanup` is called.
  */
-void swap(domain_t *dom, uintptr_t *prot_ptr, uintptr_t new_val, int flags)
+uintptr_t swap(domain_t *dom, uintptr_t *prot_ptr, uintptr_t new_val)
 {
-    const uintptr_t old_obj =
-        atomic_exchange(prot_ptr, new_val, __ATOMIC_SEQ_CST);
+    hp_t *node = list_insert_or_append(&dom->pointers, new_val);
+    if (!node)
+        return (uintptr_t) 0;
+    uintptr_t old_obj = atomic_exchange(prot_ptr, new_val, __ATOMIC_SEQ_CST);
     TRACE(TRACE_SWAP);
-    cleanup_ptr(dom, old_obj, flags);
+    return old_obj;
 }
 
 /* Forces the cleanup of old objects that have not been deallocated yet. Just

@@ -84,9 +84,16 @@ static void *writer_thread(void *arg)
         new_config->v3 = rand();
         print_config("updating config", new_config);
 
-        swap(config_dom, (uintptr_t *) &shared_config, (uintptr_t) new_config,
-             DEFER_DEALLOC);
-        // print_config("updated config ", new_config);
+        config_t *old_config = (config_t *) swap(
+            config_dom, (uintptr_t *) &shared_config, (uintptr_t) new_config);
+        if (!old_config) {
+            free(new_config);
+            err(EXIT_FAILURE, "swap");
+        } else {
+            print_config("updated config ", new_config);
+            drop(config_dom, (uintptr_t) new_config);
+            cleanup_ptr(config_dom, (uintptr_t) old_config, 0);
+        }
     }
 
     return NULL;
